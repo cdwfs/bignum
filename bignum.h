@@ -38,9 +38,8 @@ public:
 		SingleBits fbits;
 		fbits.f = f;
 		int32_t exponent = (int32_t)fbits.e - 127;
-		exponent += 1;
-		if (f < FLT_MIN ||
-			exponent < -3*32)
+		exponent += 1; // Correct for implicit leading 1
+		if (exponent < -3*32)
 		{
 			// TODO: too conservative; ignores denormalized values, but we can't represent them anyway in 32.96
 			return;
@@ -60,9 +59,10 @@ public:
 		converter.mantissa = fbits.m;
 		// exponent is [31..-96]
 		const int32_t kMaxExponent = 32;
-		int32_t iDW1 = (kMaxExponent-exponent) / 32;
+		const uint32_t lzTotal = kMaxExponent-exponent;
+		int32_t iDW1 = lzTotal / 32;
 		int32_t iDW2 = iDW1+1;
-		converter.asQword <<= ((64-24) - (kMaxExponent-exponent));
+		converter.asQword <<= ((64-24) - (lzTotal % 32));
 		m_value[iDW1] = int32_t(converter.hi32);
 		if (iDW2 < 4)
 		{
@@ -141,7 +141,6 @@ public:
 	{
 		return *this;
 	}
-
 	const BigNum operator-(void) const
 	{
 		BigNum out;
