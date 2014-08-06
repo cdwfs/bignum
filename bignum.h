@@ -34,19 +34,44 @@ public:
 	//
 	BigNum(float f)
 	{
-		if (f == 0)
-		{
-			m_value[0] = m_value[1] = m_value[2] = m_value[3] = 0;
-			return;
-		}
+		m_value[0] = m_value[1] = m_value[2] = m_value[3] = 0;
 		SingleBits fbits;
 		fbits.f = f;
 		int32_t exponent = (int32_t)fbits.e - 127;
-		assert(exponent == 0);
-		m_value[0] = 0x00000001;
-		m_value[1] = fbits.m << 9;
-		m_value[2] = 0;
-		m_value[3] = 0;
+		exponent += 1;
+		if (f < FLT_MIN ||
+			exponent < -3*32)
+		{
+			// TODO: too conservative; ignores denormalized values, but we can't represent them anyway in 32.96
+			return;
+		}
+		if (exponent >= 32)
+		{
+			// Too large to represent!
+			assert(0);
+			m_value[0] = 0x7FFFFFFF;
+			m_value[1] = 0xFFFFFFFF;
+			m_value[2] = 0xFFFFFFFF;
+			m_value[3] = 0xFFFFFFFF;
+			return;
+		}
+		Mantissa64 converter;
+		converter.unused   = 1; // implicit 1.mantissa
+		converter.mantissa = fbits.m;
+		// exponent is [31..-96]
+		const int32_t kMaxExponent = 32;
+		int32_t iDW1 = (kMaxExponent-exponent) / 32;
+		int32_t iDW2 = iDW1+1;
+		converter.asQword <<= ((64-24) - (kMaxExponent-exponent));
+		m_value[iDW1] = int32_t(converter.hi32);
+		if (iDW2 < 4)
+		{
+			m_value[iDW2] = int32_t(converter.lo32);
+		}
+		if (f < 0)
+		{
+			*this = -*this;
+		}
 	}
 	operator float() const
 	{
@@ -88,22 +113,9 @@ public:
 		SingleBits fbits;
 		int32_t iDW1 = iDW;
 		int32_t iDW2 = iDW1+1;
-		union
-		{
-			struct
-			{
-				uint64_t low32 : 32;
-				uint64_t hi32  : 32;
-			};
-			uint64_t asQword;
-			struct
-			{
-				uint64_t mantissa : 23;
-				uint64_t unused   : 41;
-			};
-		} converter;
+		Mantissa64 converter;
 		converter.hi32  = av.m_value[iDW1];
-		converter.low32 = (iDW2<4) ? av.m_value[iDW2] : 0;
+		converter.lo32 = (iDW2<4) ? av.m_value[iDW2] : 0;
 		converter.asQword >>= ((64-23) - countLeadingZeroes(converter.hi32) - 1);
 		fbits.m = converter.mantissa;
 		fbits.e = exponent + 127; // 32-bit float bias
@@ -146,6 +158,21 @@ public:
 private:
 	typedef union { float f;  struct { uint32_t m:23; uint32_t e: 8; uint32_t s:1; }; } SingleBits;
 	typedef union { double d; struct { uint64_t m:52; uint64_t e:11; uint64_t s:1; }; } DoubleBits;
+	typedef union
+	{
+		struct
+		{
+			uint64_t lo32 : 32;
+			uint64_t hi32  : 32;
+		};
+		uint64_t asQword;
+		struct
+		{
+			uint64_t mantissa : 23;
+			uint64_t unused   : 41;
+		};
+	} Mantissa64;
+
 	static inline uint32_t countLeadingZeroes(const uint32_t in)
 	{
 		unsigned long pos = 0;
