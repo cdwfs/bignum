@@ -155,6 +155,9 @@ public:
 		}
 		return out;
 	}
+
+	int32_t m_value[4]; // precision is implicitly 32.96 for now
+
 private:
 	typedef union { float f;  struct { uint32_t m:23; uint32_t e: 8; uint32_t s:1; }; } SingleBits;
 	typedef union { double d; struct { uint64_t m:52; uint64_t e:11; uint64_t s:1; }; } DoubleBits;
@@ -179,9 +182,6 @@ private:
 		uint8_t result = _BitScanReverse(&pos, in);
 		return result ? (31-pos) : 32;
 	}
-
-	int32_t m_value[4]; // precision is implicitly 32.96 for now
-
 };
 inline BigNum operator+(BigNum lhs, const BigNum &rhs) { lhs += rhs; return lhs; }
 #pragma warning(default:4201) // nameless struct/union
