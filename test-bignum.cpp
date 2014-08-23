@@ -32,6 +32,9 @@ int main(int argc, char *argv[])
 	(void)argv;
 	srand(unsigned(time(NULL)));
 
+	unsigned int fpcOld = 0, fpcNew = 0;
+	_controlfp_s(&fpcOld, 0,0); // retrieve current FP control bits
+	_controlfp_s(&fpcNew, _RC_CHOP, _MCW_RC); // Set rounding mode to chop (round towards zero); much easier to emulate in software than round-to-nearest.
 	//
 	// Test float -> BigNum -> float round-trip conversion
 	//
@@ -45,17 +48,12 @@ int main(int argc, char *argv[])
 		};
 	} fbitsIn, fbitsOut;
 
-	BigNum bnMin, bnMax;
-	memset(&bnMin, 0x00, sizeof(bnMin));
-	memset(&bnMax, 0xFF, sizeof(bnMax));
+	BigNum bnMin = 0.0f, bnMax = 0.0f;
+	memset(&bnMin.m_value, 0x00, sizeof(bnMin));
+	memset(&bnMax.m_value, 0xFF, sizeof(bnMax));
 	bnMin.m_value[3] = 1;
-	bnMax.m_value[0] = 0x7FFFFFFF;
 	float fMin = bnMin; // 0x0F800000
-	float fMax = bnMax; // 0x4EFFFFFF
-
-	unsigned int fpcOld = 0, fpcNew = 0;
-	_controlfp_s(&fpcOld, 0,0); // retrieve current FP control bits
-	_controlfp_s(&fpcNew, _RC_CHOP, _MCW_RC); // Set rounding mode to chop (round towards zero); much easier to emulate in software than round-to-nearest.
+	float fMax = bnMax; // 0x4F7FFFFF
 
 	uint32_t numTests = 0;
 	uint32_t numErrors = 0;
@@ -76,8 +74,7 @@ int main(int argc, char *argv[])
 		// When converting an extremely small float to BigNum, we're throwing away
 		// all but the top bit(s) of the mantissa. Converting back is thus necessarily quite lossy.
 		// if numLostBits < 24, we need to mask bits off
-		BigNum absBN = (fbitsIn.f < 0) ? -bn : bn;
-		uint32_t highestSetBitIndex = 8*sizeof(absBN) - countLeadingZeroes(absBN);
+		uint32_t highestSetBitIndex = (bn.m_intLength+bn.m_fracLength)*sizeof(uint32_t)*8 - countLeadingZeroes(bn);
 		int32_t numLostBits = std::max(0, 24-int32_t(highestSetBitIndex));
 		uint32_t lostBitsMask = (1 << numLostBits)-1;
 		fbitsIn.i &= ~lostBitsMask;

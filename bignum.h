@@ -9,18 +9,21 @@ class BigNum
 public:
 	BigNum(void)
 	{
+		m_intLength  = 1; // TEMP;
+		m_fracLength = 3; // TEMP;
 	}
 	BigNum(const BigNum &rhs)
 	{
-		m_value[0] = rhs.m_value[0];
-		m_value[1] = rhs.m_value[1];
-		m_value[2] = rhs.m_value[2];
-		m_value[3] = rhs.m_value[3];
+		*this = rhs;
 	}
 	BigNum& operator=(const BigNum& rhs)
 	{
 		if (this != &rhs)
 		{
+			m_sign = rhs.m_sign;
+			assert(rhs.m_intLength == 1 && rhs.m_fracLength == 3); // TEMP
+			m_intLength  = rhs.m_intLength;
+			m_fracLength = rhs.m_fracLength;
 			m_value[0] = rhs.m_value[0];
 			m_value[1] = rhs.m_value[1];
 			m_value[2] = rhs.m_value[2];
@@ -37,6 +40,9 @@ public:
 		m_value[0] = m_value[1] = m_value[2] = m_value[3] = 0;
 		SingleBits fbits;
 		fbits.f = f;
+		m_sign = fbits.s;
+		m_intLength  = 1; // TEMP
+		m_fracLength = 3; // TEMP
 		int32_t exponent = (int32_t)fbits.e - 127;
 		exponent += 1; // Correct for implicit leading 1
 		if (exponent < -3*32)
@@ -44,7 +50,7 @@ public:
 			// TODO: too conservative; ignores denormalized values, but we can't represent them anyway in 32.96
 			return;
 		}
-		if (exponent >= 32)
+		if (exponent > 32)
 		{
 			// Too large to represent!
 			assert(0);
@@ -63,31 +69,21 @@ public:
 		int32_t iDW1 = lzTotal / 32;
 		int32_t iDW2 = iDW1+1;
 		converter.asQword <<= ((64-24) - (lzTotal % 32));
-		m_value[iDW1] = int32_t(converter.hi32);
+		m_value[iDW1] = converter.hi32;
 		if (iDW2 < 4)
 		{
-			m_value[iDW2] = int32_t(converter.lo32);
-		}
-		if (f < 0)
-		{
-			*this = -*this;
+			m_value[iDW2] = converter.lo32;
 		}
 	}
 	operator float() const
 	{
-		BigNum av = *this;
-		if (m_value[0] >> 31)
-		{
-			// value is negative; convert local copy to positive
-			av = -av;
-		}
 		// Find total number of leading zeroes
 		const int32_t kMaxExponent = 32; // largest possible for 32.96
 		int32_t exponent = kMaxExponent;
 		int iDW;
 		for(iDW=0; iDW<4; ++iDW)
 		{
-			int32_t lz = (int32_t)countLeadingZeroes(av.m_value[iDW]);
+			int32_t lz = (int32_t)countLeadingZeroes(m_value[iDW]);
 			exponent -= lz;
 			if (lz < 32)
 			{
@@ -114,27 +110,75 @@ public:
 		int32_t iDW1 = iDW;
 		int32_t iDW2 = iDW1+1;
 		Mantissa64 converter;
-		converter.hi32  = av.m_value[iDW1];
-		converter.lo32 = (iDW2<4) ? av.m_value[iDW2] : 0;
+		converter.hi32  = m_value[iDW1];
+		converter.lo32 = (iDW2<4) ? m_value[iDW2] : 0;
 		converter.asQword >>= ((64-23) - countLeadingZeroes(converter.hi32) - 1);
 		fbits.m = converter.mantissa;
 		fbits.e = exponent + 127; // 32-bit float bias
-		fbits.s = (m_value[0] >> 31) & 0x1; // use original value for sign bit!
+		fbits.s = m_sign;
 		return fbits.f;
 	}
 
 	BigNum& operator+=(const BigNum &rhs)
 	{
-		uint64_t carry = 0;
-		for(int iDW=3; iDW>=0; --iDW)
+		if (m_sign == rhs.m_sign) // signs match: compute lhs+rhs, keep lhs's sign
 		{
-			uint64_t result = carry + uint64_t(uint32_t(this->m_value[iDW])) + uint64_t(uint32_t(rhs.m_value[iDW]));
-			this->m_value[iDW] = int32_t(result); // implicit & 0xFFFFFFFF
-			carry = result >> 32;
-			assert(carry <= 1); // carry bit must be either 0 or 1
+			uint8_t carry = 0;
+			for(int iDW=3; iDW>=0; --iDW)
+			{
+				carry = _addcarry_u32(carry, m_value[iDW], rhs.m_value[iDW], m_value+iDW);
+			}
 		}
-		assert(carry == 0); // If there's carry in the first DW, we have nowhere to put it
+		else if (abs(rhs) < abs(*this)) // signs differ, and |lhs| > |rhs|: compute lhs-rhs and keep lhs's sign
+		{
+			uint8_t borrow = 0;
+			for(int iDW=3; iDW>=0; --iDW)
+			{
+				borrow = _subborrow_u32(borrow, m_value[iDW], rhs.m_value[iDW], m_value+iDW);
+			}
+		}
+		else // signs differ and |lhs| <= |rhs|: compute rhs-lhs and flip lhs's sign
+		{
+			uint8_t borrow = 0;
+			for(int iDW=3; iDW>=0; --iDW)
+			{
+				borrow = _subborrow_u32(borrow, rhs.m_value[iDW], m_value[iDW], m_value+iDW);
+			}
+			m_sign = 1-m_sign;
+		}
 		return *this;
+	}
+
+	// Comparison
+	bool operator==(const BigNum &rhs) const
+	{
+		// TODO: handling different lengths is tricky.
+		assert(m_intLength == rhs.m_intLength && m_fracLength == rhs.m_fracLength);
+		bool isZero = true;
+		for(uint32_t iDW=0; iDW<m_intLength+m_fracLength; ++iDW)
+		{
+			if (m_value[iDW] != rhs.m_value[iDW])
+				return false; // value bits mismatch
+			isZero = isZero && (m_value[iDW] == 0);
+		}
+		if (isZero)
+			return true; // value bits match, and all are zero. Ignore the sign bit.
+		return m_sign == rhs.m_sign; // magnitudes are equal and non-zero. Do the sign bits match?
+	}
+	bool operator<(const BigNum &rhs) const
+	{
+		// TODO: handling different lengths is tricky.
+		assert(m_intLength == rhs.m_intLength && m_fracLength == rhs.m_fracLength);
+		bool isZero = 0;
+		for(uint32_t iDW=0; iDW<m_intLength+m_fracLength; ++iDW)
+		{
+			if      (m_value[iDW] < rhs.m_value[iDW]) return (rhs.m_sign == 0);
+			else if (m_value[iDW] > rhs.m_value[iDW]) return (m_sign != 0);
+			isZero = isZero && ((m_value[iDW] | rhs.m_value[iDW]) == 0);
+		}
+		// |lhs| == |rhs|
+		// lhs < rhs iff |lhs| != 0 and lhs is negative and rhs is not
+		return !isZero && (m_sign > rhs.m_sign);
 	}
 
 	const BigNum operator+(void) const
@@ -143,19 +187,15 @@ public:
 	}
 	const BigNum operator-(void) const
 	{
-		BigNum out;
-		uint64_t carry = 1;
-		for(int iDW=3; iDW>=0; --iDW)
-		{
-			uint64_t result = carry + uint64_t(uint32_t(~m_value[iDW]));
-			out.m_value[iDW] = int32_t(result); // implicit & 0xFFFFFFFF
-			carry = result >> 32;
-			assert(carry <= 1);
-		}
+		BigNum out = *this;
+		out.m_sign = ~m_sign;
 		return out;
 	}
 
-	int32_t m_value[4]; // precision is implicitly 32.96 for now
+	uint32_t m_intLength : 15;  // in DWORDS
+	uint32_t m_fracLength : 16; // in DWORDS
+	uint32_t m_sign : 1;        // 0: positive, 1: negative
+	uint32_t m_value[4]; // precision is implicitly 32.96 for now
 
 private:
 	typedef union { float f;  struct { uint32_t m:23; uint32_t e: 8; uint32_t s:1; }; } SingleBits;
@@ -182,5 +222,12 @@ private:
 		return result ? (31-pos) : 32;
 	}
 };
-inline BigNum operator+(BigNum lhs, const BigNum &rhs) { lhs += rhs; return lhs; }
+inline bool operator!=(const BigNum &lhs, const BigNum &rhs) { return !(lhs == rhs); }
+inline bool operator> (const BigNum &lhs, const BigNum &rhs) { return  (rhs  < lhs); }
+inline bool operator<=(const BigNum &lhs, const BigNum &rhs) { return !(lhs  > rhs); }
+inline bool operator>=(const BigNum &lhs, const BigNum &rhs) { return !(lhs  < rhs); }
+inline BigNum operator+(BigNum lhs, const BigNum &rhs) { lhs +=  rhs; return lhs; }
+inline BigNum operator-(BigNum lhs, const BigNum &rhs) { lhs += -rhs; return lhs; }
+inline BigNum operator*(BigNum lhs, const BigNum &rhs) { lhs +=  rhs; return lhs; }
+inline BigNum abs(BigNum bn) { bn.m_sign = 0; return bn; }
 #pragma warning(default:4201) // nameless struct/union
