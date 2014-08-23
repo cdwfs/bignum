@@ -224,6 +224,13 @@ int main(int argc, char *argv[])
 		// if numLostBits < 24, we need to mask bits off
 		uint32_t highestSetBitIndex = (bn.m_intLength+bn.m_fracLength)*sizeof(uint32_t)*8 - countLeadingZeroes(bn);
 		int32_t numLostBits = std::max(0, 24-int32_t(highestSetBitIndex));
+		if ( (numLostBits  > 0 && fabsf(fbitsIn.f) >= fMinExact) ||
+			 (numLostBits == 0 && fabsf(fbitsIn.f)  < fMinExact) )
+		{
+			fprintf(stderr, "fIn: %.9e (0x%08X), fMinExact: %.9e, numLostBits: %d\n",
+				fbitsIn.f, fbitsIn.i, fMinExact, numLostBits);
+			__debugbreak(); // fMinExact isn't what I think it should be...
+		}
 		uint32_t lostBitsMask = (1 << numLostBits)-1;
 		fbitsIn.i &= ~lostBitsMask;
 		// an input of -0.0 will convert to +0.0; make sure that counts as a positive match
