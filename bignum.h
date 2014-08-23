@@ -149,6 +149,37 @@ public:
 		return *this;
 	}
 
+	BigNum& operator*=(const BigNum &rhs)
+	{
+		uint32_t product[8] = {0}; // TODO: should be double the size of a regular bignum
+
+		// Implements basic "schoolbook" multiplication. More efficient algorithms exist, but they're
+		// not faster until m_length >10ish
+		for(int iR=3; iR>=0; --iR)
+		{
+			uint8_t carryT = 0, carryO = 0;
+			uint32_t hiPrev = 0;
+			for(int iL=3; iL>=0; --iL)
+			{
+				uint32_t temp, lo, hi;
+				lo = _mulx_u32(m_value[iL], rhs.m_value[iR], &hi); // [hi,lo] = lhs[iL] * rhs[iR]
+				carryT = _addcarry_u32(carryT, lo, hiPrev, &temp); // [temp, carryT] = lo + hiPrev + carryT
+				hiPrev = hi;
+				carryO = _addcarry_u32(carryO, temp, product[1+iL+iR], product+(1+iL+iR)); // [prod[1+iL+iR], carryO] += temp+carryO
+			}
+			carryT = _addcarry_u32(carryT, hiPrev, product[iR], product+iR); // prod[iR] += (hiPrev+carryT)
+			assert(carryT == 0);
+			carryO = _addcarry_u32(carryO,      0, product[iR], product+iR); // prod[iR] += carryO
+			assert(carryO == 0);
+		}
+		m_sign ^= rhs.m_sign;
+		m_value[0] = product[1];
+		m_value[1] = product[2];
+		m_value[2] = product[3];
+		m_value[3] = product[4];
+		return *this;
+	}
+
 	// Comparison
 	bool operator==(const BigNum &rhs) const
 	{
@@ -228,6 +259,6 @@ inline bool operator<=(const BigNum &lhs, const BigNum &rhs) { return !(lhs  > r
 inline bool operator>=(const BigNum &lhs, const BigNum &rhs) { return !(lhs  < rhs); }
 inline BigNum operator+(BigNum lhs, const BigNum &rhs) { lhs +=  rhs; return lhs; }
 inline BigNum operator-(BigNum lhs, const BigNum &rhs) { lhs += -rhs; return lhs; }
-inline BigNum operator*(BigNum lhs, const BigNum &rhs) { lhs +=  rhs; return lhs; }
+inline BigNum operator*(BigNum lhs, const BigNum &rhs) { lhs *=  rhs; return lhs; }
 inline BigNum abs(BigNum bn) { bn.m_sign = 0; return bn; }
 #pragma warning(default:4201) // nameless struct/union
